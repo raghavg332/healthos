@@ -3,9 +3,9 @@ HealthOS Telegram Bot
 
 Commands:
   (plain message)  → NLP parse → upsert daily_log
+  (photo)          → Gemini vision → extract body comp → upsert body_comp_scans
   /week            → trigger weekly review on demand
   /ask <question>  → ad hoc query against data
-  /evolt           → guided Evolt scan entry flow
   /status          → today's log so far
   /jobs            → show last 5 job_runs (debug)
 """
@@ -26,7 +26,11 @@ from telegram.ext import (
 )
 
 # Allow running from repo root or telegram_bot/ dir
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+REPO_ROOT = os.path.join(os.path.dirname(__file__), "..")
+sys.path.insert(0, REPO_ROOT)
+
+# Point pydantic-settings at the correct .env location
+os.chdir(os.path.join(REPO_ROOT, "backend"))
 
 from backend.app.config import settings
 
@@ -92,6 +96,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         lines.append(f"  • Energy: {parsed['energy']}/10")
     if "stress" in parsed:
         lines.append(f"  • Stress: {parsed['stress']}/10")
+    if "calories" in parsed:
+        lines.append(f"  • Calories: {parsed['calories']} kcal")
+    if "protein_g" in parsed:
+        lines.append(f"  • Protein: {parsed['protein_g']}g")
+    if "carbs_g" in parsed:
+        lines.append(f"  • Carbs: {parsed['carbs_g']}g")
+    if "fat_g" in parsed:
+        lines.append(f"  • Fat: {parsed['fat_g']}g")
     if "notes" in parsed:
         lines.append(f"  • Notes: {parsed['notes']}")
 
@@ -169,16 +181,62 @@ async def cmd_ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await send(update, data.get("answer", str(data)))
 
 
-async def cmd_evolt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/evolt — guided Evolt scan entry."""
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Photo message → Gemini vision → extract body comp → upsert body_comp_scans."""
     if not allowed(update):
         return
-    # TODO: multi-step conversation flow
-    await send(
-        update,
-        "🚧 Evolt entry not implemented yet.\n\n"
-        "For now, POST directly to /ingest/evolt with your scan data.",
-    )
+
+    await send(update, "📷 Reading your scan...")
+
+    # Download highest-res version of the photo
+    photo = update.message.photo[-1]
+    tg_file = await context.bot.get_file(photo.file_id)
+    image_bytes = bytes(await tg_file.download_as_bytearray())
+
+    # Parse with Gemini vision
+    from backend.app.ai.scan_parser import parse_scan_image
+    from backend.app.db.client import db
+    from datetime import date
+
+    try:
+        extracted = parse_scan_image(image_bytes)
+    except Exception as e:
+        await send(update, f"⚠️ Couldn't parse scan: {e}")
+        return
+
+    if not extracted:
+        await send(update, "🤔 Couldn't read any body composition data from that image. Try a clearer photo.")
+        return
+
+    # Use caption date if provided, else today
+    scan_date = date.today().isoformat()
+    if update.message.caption:
+        import re
+        match = re.search(r"\d{4}-\d{2}-\d{2}", update.message.caption)
+        if match:
+            scan_date = match.group()
+
+    row = {"scan_date": scan_date, **extracted}
+    db().table("body_comp_scans").insert(row).execute()
+
+    # Confirmation
+    lines = [f"✅ Body scan logged for {scan_date}:"]
+    if "weight_kg" in extracted:
+        lines.append(f"  • Weight: {extracted['weight_kg']} kg")
+    if "body_fat_pct" in extracted:
+        lines.append(f"  • Body fat: {extracted['body_fat_pct']}%")
+    if "muscle_mass_kg" in extracted:
+        lines.append(f"  • Muscle mass: {extracted['muscle_mass_kg']} kg")
+    if "visceral_fat" in extracted:
+        lines.append(f"  • Visceral fat: {extracted['visceral_fat']}")
+    if "bmr" in extracted:
+        lines.append(f"  • BMR: {extracted['bmr']} kcal")
+    if "bmi" in extracted:
+        lines.append(f"  • BMI: {extracted['bmi']}")
+    if "notes" in extracted:
+        lines.append(f"  • Notes: {extracted['notes']}")
+
+    await send(update, "\n".join(lines))
 
 
 async def cmd_jobs(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -226,8 +284,8 @@ def main() -> None:
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("week", cmd_week))
     app.add_handler(CommandHandler("ask", cmd_ask))
-    app.add_handler(CommandHandler("evolt", cmd_evolt))
     app.add_handler(CommandHandler("jobs", cmd_jobs))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     logger.info("Bot starting (long polling)...")
