@@ -12,6 +12,12 @@ from app.db.client import db
 
 router = APIRouter(prefix="/ingest", tags=["ingest"])
 
+# Fields that belong in daily_logs
+DAILY_FIELDS = {"weight_kg", "sleep_hrs", "sleep_qual", "energy", "stress", "notes"}
+
+# Fields that belong in nutrition_logs
+NUTRITION_FIELDS = {"calories", "protein_g", "carbs_g", "fat_g", "fibre_g"}
+
 
 class TelegramPayload(BaseModel):
     user_id: int
@@ -42,26 +48,34 @@ async def ingest_telegram(payload: TelegramPayload):
     if not metrics:
         return {"status": "ok", "parsed": {}, "message": "Nothing health-related found"}
 
-    # Upsert into daily_logs (date is the unique key)
-    log_date = payload.message_date or date.today()
+    log_date = (payload.message_date or date.today()).isoformat()
 
-    row = {
-        "date": log_date.isoformat(),
-        "raw_input": payload.text,
-        **metrics,
-    }
+    daily = {k: v for k, v in metrics.items() if k in DAILY_FIELDS}
+    nutrition = {k: v for k, v in metrics.items() if k in NUTRITION_FIELDS}
 
-    result = (
-        db()
-        .table("daily_logs")
-        .upsert(row, on_conflict="date")
-        .execute()
-    )
+    # Upsert daily_logs
+    if daily:
+        result = (
+            db()
+            .table("daily_logs")
+            .upsert({"date": log_date, "raw_input": payload.text, **daily}, on_conflict="date")
+            .execute()
+        )
+        if not result.data:
+            raise HTTPException(status_code=500, detail="Failed to upsert daily log")
 
-    if not result.data:
-        raise HTTPException(status_code=500, detail="Failed to upsert daily log")
+    # Upsert nutrition_logs
+    if nutrition:
+        result = (
+            db()
+            .table("nutrition_logs")
+            .upsert({"date": log_date, **nutrition}, on_conflict="date")
+            .execute()
+        )
+        if not result.data:
+            raise HTTPException(status_code=500, detail="Failed to upsert nutrition log")
 
-    return {"status": "ok", "parsed": metrics, "date": log_date.isoformat()}
+    return {"status": "ok", "parsed": metrics, "date": log_date}
 
 
 @router.post("/evolt")

@@ -17,6 +17,11 @@ Return JSON only, no explanation. Keys (all optional):
   sleep_qual  — sleep quality 1-10 (int)
   energy      — energy level 1-10 (int)
   stress      — stress level 1-10 (int)
+  calories    — total calories consumed (float)
+  protein_g   — protein in grams (float)
+  carbs_g     — carbohydrates in grams (float)
+  fat_g       — fat in grams (float)
+  fibre_g     — dietary fibre in grams (float)
   notes       — anything else worth recording (string)
 
 Rules:

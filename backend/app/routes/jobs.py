@@ -51,6 +51,44 @@ async def sync_cronometer(request: Request):
     return {"status": "not implemented"}
 
 
+@router.post("/nutrition-nudge")
+async def nutrition_nudge(request: Request):
+    verify_internal_secret(request)
+    log_job("nutrition-nudge", "started")
+    start = time.monotonic()
+
+    try:
+        from datetime import date
+        from app.db.client import db
+        from app.telegram import send_message
+
+        # Check if nutrition already logged today
+        today = date.today().isoformat()
+        result = db().table("nutrition_logs").select("calories, protein_g").eq("date", today).execute()
+
+        if result.data and result.data[0].get("calories"):
+            row = result.data[0]
+            msg = f"✅ Nutrition already logged today — {row['calories']} kcal, {row['protein_g']}g protein. Good work!"
+        else:
+            msg = (
+                "🍽 *Evening check-in!*\n\n"
+                "How did nutrition go today? Send me a message like:\n\n"
+                "_\"2200 cals, 180g protein, 60g fat, 200g carbs\"_\n\n"
+                "or just the highlights:\n\n"
+                "_\"hit 175g protein today, around 2100 cals\"_"
+            )
+
+        send_message(msg)
+        duration_ms = int((time.monotonic() - start) * 1000)
+        log_job("nutrition-nudge", "success", "Nudge sent", duration_ms)
+        return {"status": "success", "message": "Nudge sent"}
+
+    except Exception as e:
+        duration_ms = int((time.monotonic() - start) * 1000)
+        log_job("nutrition-nudge", "error", str(e), duration_ms)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/daily-nudge")
 async def daily_nudge(request: Request):
     verify_internal_secret(request)
