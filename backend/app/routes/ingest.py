@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from app.ai.parser import parse_health_message
@@ -76,6 +76,31 @@ async def ingest_telegram(payload: TelegramPayload):
             raise HTTPException(status_code=500, detail="Failed to upsert nutrition log")
 
     return {"status": "ok", "parsed": metrics, "date": log_date}
+
+
+@router.post("/evolt-photo")
+async def ingest_evolt_photo(request: Request):
+    from app.ai.scan_parser import parse_scan_image
+
+    image_bytes = await request.body()
+    content_type = request.headers.get("content-type", "image/jpeg")
+    scan_date = request.headers.get("x-scan-date", date.today().isoformat())
+
+    if not image_bytes:
+        raise HTTPException(status_code=400, detail="No image data received")
+
+    extracted = parse_scan_image(image_bytes, mime_type=content_type)
+
+    if not extracted:
+        raise HTTPException(status_code=422, detail="Could not extract body comp data from image")
+
+    row = {"scan_date": scan_date, **extracted}
+    result = db().table("body_comp_scans").insert(row).execute()
+
+    if not result.data:
+        raise HTTPException(status_code=500, detail="Failed to insert scan")
+
+    return {"status": "ok", "scan_date": scan_date, "extracted": extracted}
 
 
 @router.post("/evolt")

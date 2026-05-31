@@ -193,31 +193,34 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     tg_file = await context.bot.get_file(photo.file_id)
     image_bytes = bytes(await tg_file.download_as_bytearray())
 
-    # Parse with Gemini vision
-    from backend.app.ai.scan_parser import parse_scan_image
-    from backend.app.db.client import db
-    from datetime import date
-
-    try:
-        extracted = parse_scan_image(image_bytes)
-    except Exception as e:
-        await send(update, f"⚠️ Couldn't parse scan: {e}")
-        return
-
-    if not extracted:
-        await send(update, "🤔 Couldn't read any body composition data from that image. Try a clearer photo.")
-        return
-
     # Use caption date if provided, else today
+    import re
+    from datetime import date
     scan_date = date.today().isoformat()
     if update.message.caption:
-        import re
         match = re.search(r"\d{4}-\d{2}-\d{2}", update.message.caption)
         if match:
             scan_date = match.group()
 
-    row = {"scan_date": scan_date, **extracted}
-    db().table("body_comp_scans").insert(row).execute()
+    # POST image bytes to API
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.post(
+            f"{API}/ingest/evolt-photo",
+            content=image_bytes,
+            headers={
+                "content-type": "image/jpeg",
+                "x-scan-date": scan_date,
+            },
+        )
+
+    if resp.status_code == 422:
+        await send(update, "🤔 Couldn't read body comp data from that image — try a clearer photo.")
+        return
+    if resp.status_code != 200:
+        await send(update, f"⚠️ Error processing scan: {resp.text}")
+        return
+
+    extracted = resp.json().get("extracted", {})
 
     # Confirmation
     lines = [f"✅ Body scan logged for {scan_date}:"]
