@@ -89,44 +89,90 @@ async def nutrition_nudge(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _has_logged_today() -> bool:
+    """Return True if the user has logged anything in daily_logs today."""
+    from datetime import date
+    result = db().table("daily_logs").select("id").eq("date", date.today().isoformat()).execute()
+    return bool(result.data)
+
+
+def _has_logged_yesterday_nutrition() -> bool:
+    """Return True if nutrition was logged for yesterday."""
+    from datetime import date, timedelta
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    result = db().table("nutrition_logs").select("id").eq("date", yesterday).execute()
+    return bool(result.data)
+
+
+async def _run_daily_nudge(is_retry: bool = False) -> str:
+    """Build context and send the daily nudge. Returns the nudge text."""
+    from app.ai.context_builder import build_daily_context
+    from app.ai.gemini import generate
+    from app.telegram import send_message
+    from datetime import date
+
+    context = build_daily_context()
+
+    system = """You are a personal health coach for a software engineer in Singapore doing body recomp.
+
+Send a brief, motivating morning check-in based on their data. Be specific — reference actual numbers.
+Keep it under 200 words. Structure:
+1. One sentence on how yesterday went overall (nutrition + recovery)
+2. One key thing to focus on today (training, nutrition, or recovery) based on today's logged data if available
+3. One encouraging line to close
+
+Be direct and human — not corporate wellness speak."""
+
+    nudge_text = generate(system=system, user=context, temperature=0.8)
+
+    db().table("ai_insights").insert({
+        "insight_type": "daily_nudge",
+        "period_start": date.today().isoformat(),
+        "period_end":   date.today().isoformat(),
+        "prompt":       context,
+        "response":     nudge_text,
+        "model":        "gemini",
+    }).execute()
+
+    prefix = "🌤 *Mid-morning check-in!*\n\n" if is_retry else "☀️ *Good morning!*\n\n"
+    send_message(prefix + nudge_text)
+    return nudge_text
+
+
 @router.post("/daily-nudge")
 async def daily_nudge(request: Request):
+    """
+    8am SGT — check if today's vitals and yesterday's nutrition are logged.
+    If yes: generate and send the nudge.
+    If no: remind the user to log, and let the 12pm retry handle it.
+    """
     verify_internal_secret(request)
     log_job("daily-nudge", "started")
     start = time.monotonic()
 
     try:
-        from app.ai.context_builder import build_daily_context
-        from app.ai.gemini import generate
-        from app.db.client import db
         from app.telegram import send_message
-        from datetime import date
 
-        context = build_daily_context()
+        has_today = _has_logged_today()
+        has_yesterday_nutrition = _has_logged_yesterday_nutrition()
 
-        system = """You are a personal health coach for a software engineer in Singapore doing body recomp.
+        missing = []
+        if not has_today:
+            missing.append("today's sleep / energy / stress")
+        if not has_yesterday_nutrition:
+            missing.append("yesterday's nutrition")
 
-Send a brief, motivating morning check-in based on their data. Be specific — reference actual numbers.
-Keep it under 200 words. Structure:
-1. One sentence on how yesterday went overall
-2. One key thing to focus on today (training, nutrition, or recovery)
-3. One encouraging line to close
+        if missing:
+            send_message(
+                "☀️ *Good morning!*\n\n"
+                f"Quick reminder — I'm still missing: {', '.join(missing)}.\n\n"
+                "Log it and I'll send your proper morning summary at noon. 💪"
+            )
+            duration_ms = int((time.monotonic() - start) * 1000)
+            log_job("daily-nudge", "success", f"Reminder sent — missing: {', '.join(missing)}", duration_ms)
+            return {"status": "success", "message": "Reminder sent, retry at noon"}
 
-Be direct and human — not corporate wellness speak."""
-
-        nudge_text = generate(system=system, user=context, temperature=0.8)
-
-        db().table("ai_insights").insert({
-            "insight_type": "daily_nudge",
-            "period_start": date.today().isoformat(),
-            "period_end":   date.today().isoformat(),
-            "prompt":       context,
-            "response":     nudge_text,
-            "model":        "gemini",
-        }).execute()
-
-        send_message(f"☀️ *Good morning!*\n\n{nudge_text}")
-
+        nudge_text = await _run_daily_nudge(is_retry=False)
         duration_ms = int((time.monotonic() - start) * 1000)
         log_job("daily-nudge", "success", "Nudge sent", duration_ms)
         return {"status": "success", "message": "Daily nudge sent"}
@@ -134,6 +180,43 @@ Be direct and human — not corporate wellness speak."""
     except Exception as e:
         duration_ms = int((time.monotonic() - start) * 1000)
         log_job("daily-nudge", "error", str(e), duration_ms)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/daily-nudge-retry")
+async def daily_nudge_retry(request: Request):
+    """
+    12pm SGT — send the nudge regardless, using whatever data exists by now.
+    Only fires if the 8am nudge sent a reminder instead of the full nudge.
+    """
+    verify_internal_secret(request)
+    log_job("daily-nudge-retry", "started")
+    start = time.monotonic()
+
+    try:
+        # If the 8am nudge already sent (no reminder), skip the retry
+        from datetime import date
+        today = date.today().isoformat()
+        recent = (
+            db().table("ai_insights")
+            .select("id")
+            .eq("insight_type", "daily_nudge")
+            .eq("period_start", today)
+            .execute()
+        )
+        if recent.data:
+            duration_ms = int((time.monotonic() - start) * 1000)
+            log_job("daily-nudge-retry", "success", "Skipped — 8am nudge already sent", duration_ms)
+            return {"status": "success", "message": "Skipped — already sent this morning"}
+
+        nudge_text = await _run_daily_nudge(is_retry=True)
+        duration_ms = int((time.monotonic() - start) * 1000)
+        log_job("daily-nudge-retry", "success", "Retry nudge sent", duration_ms)
+        return {"status": "success", "message": "Retry nudge sent"}
+
+    except Exception as e:
+        duration_ms = int((time.monotonic() - start) * 1000)
+        log_job("daily-nudge-retry", "error", str(e), duration_ms)
         raise HTTPException(status_code=500, detail=str(e))
 
 
