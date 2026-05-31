@@ -25,7 +25,7 @@ that synthesises all data into actionable guidance.
 |---|---|
 | Database | Supabase (Postgres + pgvector + pg_cron + pg_net) |
 | Backend | Python FastAPI (async) |
-| AI | Anthropic Claude API (claude-opus-4-5) |
+| AI | Google Gemini API (gemini-2.0-flash) |
 | Bot | python-telegram-bot |
 | Frontend | Next.js + shadcn/ui + Recharts (later phase) |
 | Hosting | Railway (backend + bot as separate services) |
