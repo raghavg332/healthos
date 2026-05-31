@@ -29,8 +29,11 @@ from telegram.ext import (
 REPO_ROOT = os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, REPO_ROOT)
 
-# Point pydantic-settings at the correct .env location
-os.chdir(os.path.join(REPO_ROOT, "backend"))
+# Locally: chdir to backend/ so pydantic-settings finds .env
+# On Railway: env vars are injected directly, no .env needed
+_env_file = os.path.join(REPO_ROOT, "backend", ".env")
+if os.path.exists(_env_file):
+    os.chdir(os.path.join(REPO_ROOT, "backend"))
 
 from backend.app.config import settings
 
