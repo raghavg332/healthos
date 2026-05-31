@@ -245,6 +245,28 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await send(update, "\n".join(lines))
 
 
+async def cmd_sync(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/sync — manually trigger Hevy sync."""
+    if not allowed(update):
+        return
+
+    await send(update, "🔄 Syncing Hevy...")
+
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.post(
+            f"{API}/jobs/sync-hevy",
+            headers=INTERNAL_HEADERS,
+            json={},
+        )
+
+    if resp.status_code != 200:
+        await send(update, f"⚠️ Sync failed: {resp.text}")
+        return
+
+    data = resp.json()
+    await send(update, f"✅ {data.get('message', 'Sync complete')}")
+
+
 async def cmd_jobs(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/jobs — show last 5 job_runs."""
     if not allowed(update):
@@ -290,6 +312,7 @@ def main() -> None:
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("week", cmd_week))
     app.add_handler(CommandHandler("ask", cmd_ask))
+    app.add_handler(CommandHandler("sync", cmd_sync))
     app.add_handler(CommandHandler("jobs", cmd_jobs))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
