@@ -1,23 +1,31 @@
 """
-Shared Gemini client and generate helper.
-All AI calls in the app go through here.
+Text generation via Groq (llama-3.3-70b-versatile).
+All text AI calls go through generate() here.
+Gemini is used ONLY for vision — see scan_parser.py.
 """
 
-from google import genai
-from google.genai import types
+from typing import Optional
+from groq import Groq
 from app.config import settings
 
-client = genai.Client(api_key=settings.gemini_api_key)
+_client: Optional[Groq] = None
+
+
+def _groq() -> Groq:
+    global _client
+    if _client is None:
+        _client = Groq(api_key=settings.groq_api_key)
+    return _client
 
 
 def generate(system: str, user: str, temperature: float = 0.7) -> str:
-    """Single-turn generation. Returns the response text."""
-    response = client.models.generate_content(
-        model=settings.gemini_model,
-        contents=user,
-        config=types.GenerateContentConfig(
-            system_instruction=system,
-            temperature=temperature,
-        ),
+    """Single-turn text generation via Groq. Returns the response text."""
+    response = _groq().chat.completions.create(
+        model=settings.groq_model,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        temperature=temperature,
     )
-    return response.text.strip()
+    return response.choices[0].message.content.strip()

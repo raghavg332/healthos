@@ -8,9 +8,13 @@ class Settings(BaseSettings):
     supabase_url: str
     supabase_service_key: str
 
-    # Gemini
+    # Gemini (vision only — body scan photos)
     gemini_api_key: str
     gemini_model: str = "gemini-2.0-flash"
+
+    # Groq (text generation — NLP parsing, nudges, weekly review)
+    groq_api_key: str
+    groq_model: str = "llama-3.3-70b-versatile"
 
     # Telegram
     telegram_bot_token: str
