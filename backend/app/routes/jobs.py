@@ -113,14 +113,17 @@ async def _run_daily_nudge(is_retry: bool = False) -> str:
 
     context = build_daily_context()
 
-    system = """You are a personal health coach for a software engineer in Singapore doing body recomp.
+    system = """You are a personal strength & physique coach for a 22-year-old software engineer in Singapore on a 3-month lean recomp (get toned).
 
-Send a brief, motivating morning check-in based on their data. Be specific — reference actual numbers.
-Keep it under 200 words. Structure:
-1. One sentence on how yesterday went overall (nutrition + recovery)
-2. One key thing to focus on today (training, nutrition, or recovery) based on today's logged data if available
-3. One encouraging line to close
+FOCUS, in order: GYM PROGRESS, DIET, WEIGHT. Sleep/energy/stress are secondary — mention only if clearly relevant.
 
+Send a brief, motivating morning check-in based on their data. Be specific — reference actual numbers (lifts, protein, weight).
+Keep it under 150 words. Structure:
+1. One line on yesterday — did they train / hit protein / how's weight tracking vs target
+2. The ONE thing to nail today (a lift to progress, a protein target, a training day) based on the data
+3. One short line to close
+
+If a prior recommendation is shown in the context, acknowledge whether they followed through on it.
 Be direct and human — not corporate wellness speak."""
 
     nudge_text = generate(system=system, user=context, temperature=0.8)
@@ -131,7 +134,7 @@ Be direct and human — not corporate wellness speak."""
         "period_end":   date.today().isoformat(),
         "prompt":       context,
         "response":     nudge_text,
-        "model":        "gemini",
+        "model":        "groq",
     }).execute()
 
     prefix = "🌤 *Mid-morning check-in!*\n\n" if is_retry else "☀️ *Good morning!*\n\n"

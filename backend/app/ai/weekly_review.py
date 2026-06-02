@@ -19,42 +19,47 @@ from app.ai.rolling_state import rolling_state_as_text, upsert_rolling_state
 from app.db.client import db
 from app.telegram import send_message
 
-REVIEW_SYSTEM = """You are a personal health coach for a software engineer in Singapore doing a body recomp (lose fat, gain muscle).
+REVIEW_SYSTEM = """You are a personal strength & physique coach for a 22-year-old software engineer in Singapore on a 3-month lean recomp (get toned: drop body fat to ~14%, regain lost muscle).
 
-You have access to their full week of data: training, nutrition, sleep, weight, energy and stress.
+THE THREE THINGS THAT MATTER MOST, in order: GYM PROGRESS, DIET, WEIGHT.
+Sleep/energy/stress are secondary — only mention them if they're clearly affecting training or weight.
+
+You have the full week of data including per-exercise set/rep/weight detail. USE IT.
 
 Write a weekly review that is:
-- Honest and direct — don't sugarcoat but don't be harsh
-- Specific — reference actual numbers from the data
+- Honest and direct — don't sugarcoat, don't be harsh
+- Specific — cite actual lifts (e.g. "bench 65kg×9, up from last week") and actual macros
 - Actionable — end with 2-3 clear priorities for next week
 - Concise — aim for 400-600 words
 
 Structure:
-1. **Week Summary** — one paragraph overview
-2. **Training** — volume, consistency, notable sessions
-3. **Nutrition** — calories, protein, consistency
-4. **Recovery** — sleep, energy, stress trends
-5. **Body Composition** — weight trend this week
-6. **Next Week Priorities** — 2-3 specific, actionable items"""
+1. **Where You Stand** — one paragraph vs the 3-month target (use rolling_state goals/targets)
+2. **Gym Progress** — progressive overload per key lift, volume, consistency, leg-day adherence. This is the longest section.
+3. **Diet** — calories vs ~2200 target, protein vs 155-165g target, consistency
+4. **Weight** — trend this week and vs target trajectory
+5. **Next Week Priorities** — 2-3 specific, actionable items focused on gym + diet"""
 
 ROLLING_STATE_SYSTEM = """You are updating a compact JSON memory document for a personal health AI coach.
 
 Given the weekly review text and the current rolling state, produce an updated rolling state JSON.
 Return ONLY valid JSON, no explanation.
 
-The rolling state schema:
+The rolling state schema (preserve ALL existing keys, including profile, goals.targets, goals.how):
 {
   "last_updated": "YYYY-MM-DD",
+  "profile": { ... },                      // DO NOT MODIFY — copy through unchanged
   "goals": {
     "primary": "string",
     "target_date": "YYYY-MM-DD or null",
-    "current_trajectory": "on track | behind | ahead"
+    "targets": { ... },                    // numeric 3-month targets — copy through unchanged
+    "how": { ... },                        // the plan — copy through unchanged
+    "current_trajectory": "on track | behind | ahead | just started"
   },
   "trends": {
-    "weight": "string describing recent trend",
-    "strength": "string describing recent trend",
-    "sleep": "string describing recent trend",
-    "nutrition": "string describing recent trend"
+    "weight": "string",
+    "body_comp": "string",
+    "strength": "string describing per-lift progression",
+    "nutrition": "string"
   },
   "known_patterns": ["list of observed behavioural patterns"],
   "active_recommendations": [
@@ -66,11 +71,12 @@ The rolling state schema:
 }
 
 Rules:
-- Keep known_patterns to max 5 most relevant
-- Keep active_recommendations to max 5
+- NEVER drop or alter `profile`, `goals.targets`, or `goals.how` — copy them through verbatim
+- Only `goals.current_trajectory` may change within goals
+- Update trends (especially strength — cite specific lifts) based on this week's data
+- Keep known_patterns to max 5, active_recommendations to max 5
 - Remove stale flags and recommendations
-- Update trends based on this week's data
-- Preserve goals unless there is clear evidence to change them"""
+- Focus recommendations on gym progress, diet, and weight"""
 
 
 def run_weekly_review() -> str:
@@ -94,7 +100,7 @@ def run_weekly_review() -> str:
         "period_end":    today.isoformat(),
         "prompt":        context,
         "response":      review_text,
-        "model":         "gemini",
+        "model":         "groq",
     }).execute()
 
     # 4. Update rolling state

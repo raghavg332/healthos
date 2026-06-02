@@ -19,6 +19,38 @@ def _get_week_start(d: date) -> date:
     return d - timedelta(days=d.weekday())
 
 
+def _format_sets(sets: list) -> str:
+    """Condense a list of set dicts into 'weightxreps' tokens, collapsing repeats."""
+    tokens = []
+    for s in sets or []:
+        w = s.get("weight_kg")
+        r = s.get("reps")
+        if w is None and r is None:
+            continue
+        w_str = f"{w:g}kg" if w is not None else "bw"
+        tokens.append(f"{w_str}x{r}" if r is not None else w_str)
+    return ", ".join(tokens)
+
+
+def format_workouts(workouts: list) -> str:
+    """
+    Render workouts (rows including the `exercises` JSON) into a compact,
+    readable per-exercise summary the AI can use to judge progressive overload.
+    """
+    if not workouts:
+        return "No workouts logged."
+    blocks = []
+    for w in workouts:
+        header = f"{w.get('date')} — {w.get('title')} ({w.get('duration_mins')}min, {w.get('volume_kg')}kg total)"
+        lines = [header]
+        for ex in w.get("exercises") or []:
+            sets_str = _format_sets(ex.get("sets"))
+            if sets_str:
+                lines.append(f"  • {ex.get('title')}: {sets_str}")
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks)
+
+
 def build_daily_context() -> str:
     """
     Context for the morning daily nudge.
@@ -62,19 +94,34 @@ def build_daily_context() -> str:
         .execute()
     ).data
 
-    # This week's workouts
+    # This week's workouts (with full exercise/set detail)
     week_workouts = (
         db().table("workouts")
-        .select("date, title, duration_mins, volume_kg")
+        .select("date, title, duration_mins, volume_kg, exercises")
         .gte("date", week_start.isoformat())
         .lt("date", today.isoformat())
         .order("date")
         .execute()
     ).data
 
+    # The most recent daily nudge (so we can follow up on prior advice)
+    prev_nudge = (
+        db().table("ai_insights")
+        .select("period_start, response")
+        .eq("insight_type", "daily_nudge")
+        .lt("period_start", today.isoformat())
+        .order("period_start", desc=True)
+        .limit(1)
+        .execute()
+    ).data
+    prev_nudge_text = prev_nudge[0]["response"] if prev_nudge else "None — this is the first nudge."
+
     return f"""
 === ROLLING STATE (AI Memory) ===
 {rolling_state_as_text()}
+
+=== YOUR PREVIOUS CHECK-IN (follow up on this) ===
+{prev_nudge_text}
 
 === YESTERDAY ({yesterday.isoformat()}) ===
 Daily log: {json.dumps(yday_log[0] if yday_log else None, indent=2)}
@@ -87,8 +134,8 @@ Daily logs:
 Nutrition logs:
 {json.dumps(week_nutrition, indent=2)}
 
-Workouts:
-{json.dumps(week_workouts, indent=2)}
+Workouts (with set detail):
+{format_workouts(week_workouts)}
 
 Today's date: {today.isoformat()}
 """.strip()
@@ -104,6 +151,15 @@ def build_weekly_context() -> str:
 
     # This week's raw data
     week_data = db().rpc("get_week_data", {"p_week_start": week_start.isoformat()}).execute().data
+
+    # This week's workouts with full set detail (for progressive-overload analysis)
+    week_workouts = (
+        db().table("workouts")
+        .select("date, title, duration_mins, volume_kg, exercises")
+        .gte("date", week_start.isoformat())
+        .order("date")
+        .execute()
+    ).data
 
     # Last 4 weekly summaries
     weekly_summaries = (
@@ -148,6 +204,9 @@ def build_weekly_context() -> str:
 
 === THIS WEEK RAW DATA ({week_start.isoformat()}) ===
 {json.dumps(week_data, indent=2)}
+
+=== THIS WEEK WORKOUTS (with set detail) ===
+{format_workouts(week_workouts)}
 
 === LAST 4 WEEKLY SUMMARIES ===
 {json.dumps(weekly_summaries, indent=2)}
