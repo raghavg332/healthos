@@ -36,6 +36,7 @@ if os.path.exists(_env_file):
     os.chdir(os.path.join(REPO_ROOT, "backend"))
 
 from backend.app.config import settings
+from backend.app.retry import with_retry_async
 
 logging.basicConfig(
     format="%(asctime)s — %(name)s — %(levelname)s — %(message)s",
@@ -51,6 +52,15 @@ INTERNAL_HEADERS = {
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
+
+@with_retry_async()
+async def api_request(method: str, url: str, *, timeout: float = 30, **kwargs) -> httpx.Response:
+    """HTTP call to the backend API, retrying transient transport errors
+    (timeouts, connection drops, Railway cold starts). Status codes are
+    returned untouched for the caller to handle."""
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        return await client.request(method, url, **kwargs)
+
 
 def allowed(update: Update) -> bool:
     return update.effective_user.id == settings.telegram_allowed_user_id
@@ -70,11 +80,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     text = update.message.text
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(
-            f"{API}/ingest/telegram",
-            json={"user_id": update.effective_user.id, "text": text},
-        )
+    resp = await api_request(
+        "POST",
+        f"{API}/ingest/telegram",
+        json={"user_id": update.effective_user.id, "text": text},
+        timeout=30,
+    )
 
     if resp.status_code != 200:
         await send(update, f"⚠️ Error logging entry: {resp.text}")
@@ -118,8 +129,7 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if not allowed(update):
         return
 
-    async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.get(f"{API}/query/status")
+    resp = await api_request("GET", f"{API}/query/status", timeout=15)
 
     if resp.status_code != 200:
         await send(update, f"⚠️ Error fetching status: {resp.text}")
@@ -140,12 +150,13 @@ async def cmd_week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     await send(update, "🔄 Running weekly review...")
 
-    async with httpx.AsyncClient(timeout=120) as client:
-        resp = await client.post(
-            f"{API}/jobs/weekly-review",
-            headers=INTERNAL_HEADERS,
-            json={},
-        )
+    resp = await api_request(
+        "POST",
+        f"{API}/jobs/weekly-review",
+        headers=INTERNAL_HEADERS,
+        json={},
+        timeout=120,
+    )
 
     if resp.status_code != 200:
         await send(update, f"⚠️ Weekly review failed: {resp.text}")
@@ -170,8 +181,7 @@ async def cmd_ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     await send(update, "🔍 Thinking...")
 
-    async with httpx.AsyncClient(timeout=60) as client:
-        resp = await client.get(f"{API}/query/ask", params={"q": question})
+    resp = await api_request("GET", f"{API}/query/ask", params={"q": question}, timeout=60)
 
     if resp.status_code != 200:
         await send(update, f"⚠️ Error: {resp.text}")
@@ -206,15 +216,16 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             scan_date = match.group()
 
     # POST image bytes to API
-    async with httpx.AsyncClient(timeout=60) as client:
-        resp = await client.post(
-            f"{API}/ingest/evolt-photo",
-            content=image_bytes,
-            headers={
-                "content-type": "image/jpeg",
-                "x-scan-date": scan_date,
-            },
-        )
+    resp = await api_request(
+        "POST",
+        f"{API}/ingest/evolt-photo",
+        content=image_bytes,
+        headers={
+            "content-type": "image/jpeg",
+            "x-scan-date": scan_date,
+        },
+        timeout=60,
+    )
 
     if resp.status_code == 422:
         await send(update, "🤔 Couldn't read body comp data from that image — try a clearer photo.")
@@ -252,12 +263,13 @@ async def cmd_sync(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     await send(update, "🔄 Syncing Hevy...")
 
-    async with httpx.AsyncClient(timeout=60) as client:
-        resp = await client.post(
-            f"{API}/jobs/sync-hevy",
-            headers=INTERNAL_HEADERS,
-            json={},
-        )
+    resp = await api_request(
+        "POST",
+        f"{API}/jobs/sync-hevy",
+        headers=INTERNAL_HEADERS,
+        json={},
+        timeout=60,
+    )
 
     if resp.status_code != 200:
         await send(update, f"⚠️ Sync failed: {resp.text}")

@@ -7,6 +7,7 @@ Gemini is used ONLY for vision — see scan_parser.py.
 from typing import Optional
 from groq import Groq
 from app.config import settings
+from app.retry import with_retry
 
 _client: Optional[Groq] = None
 
@@ -18,6 +19,7 @@ def _groq() -> Groq:
     return _client
 
 
+@with_retry()
 def generate(system: str, user: str, temperature: float = 0.7) -> str:
     """Single-turn text generation via Groq. Returns the response text."""
     response = _groq().chat.completions.create(

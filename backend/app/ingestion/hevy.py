@@ -10,9 +10,22 @@ import httpx
 
 from app.config import settings
 from app.db.client import db
+from app.retry import with_retry
 
 HEVY_BASE = "https://api.hevyapp.com/v1"
 PAGE_SIZE = 10  # Hevy max
+
+
+@with_retry()
+def _fetch_page(client: httpx.Client, headers: dict, page: int) -> dict:
+    """Fetch one page of workouts. Retries on transient errors (429/5xx/timeouts)."""
+    resp = client.get(
+        f"{HEVY_BASE}/workouts",
+        headers=headers,
+        params={"page": page, "pageSize": PAGE_SIZE},
+    )
+    resp.raise_for_status()
+    return resp.json()
 
 
 def _parse_dt(s: Optional[str]) -> Optional[datetime]:
@@ -65,13 +78,7 @@ def sync_hevy() -> dict:
 
     with httpx.Client(timeout=30) as client:
         while page <= total_pages:
-            resp = client.get(
-                f"{HEVY_BASE}/workouts",
-                headers=headers,
-                params={"page": page, "pageSize": PAGE_SIZE},
-            )
-            resp.raise_for_status()
-            data = resp.json()
+            data = _fetch_page(client, headers, page)
 
             total_pages = data.get("page_count", 1)
             workouts = data.get("workouts", [])

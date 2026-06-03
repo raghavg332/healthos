@@ -7,6 +7,7 @@ import json
 from google import genai
 from google.genai import types
 from app.config import settings
+from app.retry import with_retry
 
 client = genai.Client(api_key=settings.gemini_api_key)
 
@@ -29,6 +30,7 @@ Rules:
 - Return {} if you cannot read any body composition data from the image"""
 
 
+@with_retry()
 def parse_scan_image(image_bytes: bytes, mime_type: str = "image/jpeg") -> dict:
     """
     Extract body composition metrics from a scan image.
