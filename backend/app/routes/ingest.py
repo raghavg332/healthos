@@ -18,6 +18,22 @@ DAILY_FIELDS = {"weight_kg", "sleep_hrs", "sleep_qual", "energy", "stress", "not
 # Fields that belong in nutrition_logs
 NUTRITION_FIELDS = {"calories", "protein_g", "carbs_g", "fat_g", "fibre_g"}
 
+# 1-10 rating fields — DB enforces CHECK (BETWEEN 1 AND 10).
+# The parser can emit out-of-range values (e.g. "no stress" -> 0), so clamp.
+RATING_FIELDS = {"sleep_qual", "energy", "stress"}
+
+
+def _clamp_ratings(daily: dict) -> dict:
+    """Clamp 1-10 rating fields into [1, 10]; drop any non-numeric values."""
+    cleaned = dict(daily)
+    for field in RATING_FIELDS:
+        if field in cleaned and cleaned[field] is not None:
+            try:
+                cleaned[field] = max(1, min(10, int(round(float(cleaned[field])))))
+            except (TypeError, ValueError):
+                cleaned.pop(field)
+    return cleaned
+
 
 class TelegramPayload(BaseModel):
     user_id: int
@@ -51,6 +67,7 @@ async def ingest_telegram(payload: TelegramPayload):
     log_date = (payload.message_date or date.today()).isoformat()
 
     daily = {k: v for k, v in metrics.items() if k in DAILY_FIELDS}
+    daily = _clamp_ratings(daily)
     nutrition = {k: v for k, v in metrics.items() if k in NUTRITION_FIELDS}
 
     # Upsert daily_logs
