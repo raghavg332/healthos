@@ -98,8 +98,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await send(update, "🤔 Didn't catch any health metrics — try again?")
         return
 
-    # Friendly confirmation
-    lines = ["✅ Logged:"]
+    # Friendly confirmation — flag the date when it's not today (backdated entry)
+    from datetime import date as _date
+    log_date = data.get("date")
+    header = "✅ Logged:" if log_date == _date.today().isoformat() else f"✅ Logged for {log_date}:"
+    lines = [header]
     if "weight_kg" in parsed:
         lines.append(f"  • Weight: {parsed['weight_kg']} kg")
     if "sleep_hrs" in parsed:

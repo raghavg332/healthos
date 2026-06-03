@@ -64,7 +64,13 @@ async def ingest_telegram(payload: TelegramPayload):
     if not metrics:
         return {"status": "ok", "parsed": {}, "message": "Nothing health-related found"}
 
-    log_date = (payload.message_date or date.today()).isoformat()
+    # Date precedence: explicit payload date > date resolved by the parser
+    # ("yesterday", "May 30", ...) > today.
+    parsed_date = metrics.get("date")
+    log_date = (
+        payload.message_date.isoformat() if payload.message_date
+        else parsed_date or date.today().isoformat()
+    )
 
     daily = {k: v for k, v in metrics.items() if k in DAILY_FIELDS}
     daily = _clamp_ratings(daily)

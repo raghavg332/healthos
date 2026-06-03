@@ -5,10 +5,17 @@ that were mentioned.
 """
 
 import json
+from datetime import date
+
 from app.ai.gemini import generate
 
 SYSTEM_PROMPT = """Extract health metrics from the user message.
+Today's date is {today} ({weekday}). Use it to resolve any relative dates.
 Return JSON only, no explanation, no markdown fences. Keys (all optional):
+  date        — the day the entry refers to, as YYYY-MM-DD. Resolve relative
+                references ("yesterday", "last sunday", "2 days ago") and
+                absolute ones ("May 30", "2026-05-30") against today's date.
+                OMIT this key entirely if no day is mentioned (it defaults to today).
   weight_kg   — body weight in kg (float)
   sleep_hrs   — hours of sleep (float)
   sleep_qual  — sleep quality 1-10 (int)
@@ -25,7 +32,7 @@ Rules:
 - Omit keys that are not mentioned or cannot be inferred.
 - If the user gives a qualitative description for a 1-10 field (e.g. "sleep was trash"),
   make a reasonable numeric inference and include it.
-- Return {} if nothing health-related is mentioned.
+- Return {{}} if nothing health-related is mentioned.
 - Never include keys with null values.
 - Return raw JSON only — no markdown, no ```json fences."""
 
@@ -35,7 +42,9 @@ def parse_health_message(text: str) -> dict:
     Parse a raw Telegram message and return a dict of extracted health metrics.
     Returns an empty dict if nothing relevant is found.
     """
-    raw = generate(system=SYSTEM_PROMPT, user=text, temperature=0)
+    today = date.today()
+    system = SYSTEM_PROMPT.format(today=today.isoformat(), weekday=today.strftime("%A"))
+    raw = generate(system=system, user=text, temperature=0)
 
     # Strip markdown fences if present (just in case)
     if raw.startswith("```"):
